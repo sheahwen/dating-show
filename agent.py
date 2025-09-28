@@ -120,6 +120,8 @@ class DirectorAgent(BaseAgent):
     """Agent representing the director of the dating show."""
 
     def __init__(self, name: str, model_client: OllamaChatCompletionClient):
+        self.show_format = "reality_dating_show"
+        self.directing_style = "dramatic_engaging"
         super().__init__(name, AgentType.DIRECTOR, model_client)
 
     def get_system_message(self) -> str:

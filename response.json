@@ -1,0 +1,62 @@
+{
+    "episode_title": "First Impressions",
+    "total_duration": 420,
+    "overall_mood": "romantic/dramatic/playful",
+    "character_descriptions": {
+      "Alex": "Confident and adventurous, Alex has a charming smile and bright blue eyes. He stands tall with a lean build.",
+      "Sarah": "Shy and introverted, Sarah has a petite frame and soft features. She sits quietly with her hair styled in loose waves."
+    },
+    "scene_segments": [
+      {
+        "speaker": "Alex",
+        "dialogue": "I'm Alex, 28, from New York City.",
+        "duration_seconds": 15.0,
+        "scene_description": "Close-up of Alex's face as he speaks, with a slight smile on his lips. The camera pans out to reveal him standing confidently in front of the villa group.",
+        "camera_angle": "close-up",
+        "mood": "confident_charming",
+        "visual_elements": ["Alex's outfit", "villa background"],
+        "character_emotions": {"Alex": "excited_confident"},
+        "background_setting": "villa_group_room",
+        "lighting": "softbox_natural"
+      },
+      {
+        "speaker": "Jamie",
+        "dialogue": "Wow, it looks like we've got a pretty diverse group here.",
+        "duration_seconds": 12.0,
+        "scene_description": "Over-shoulder shot of Jamie as he speaks, looking around the room with amusement. The camera pans to reveal the group's varying ages and ethnicities.",
+        "camera_angle": "over-shoulder",
+        "mood": "amused_playful",
+        "visual_elements": ["group dynamics", "Jamie's outfit"],
+        "character_emotions": {"Jamie": "friendly_amused"},
+        "background_setting": "villa_group_room",
+        "lighting": "softbox_natural"
+      },
+      {
+        "speaker": "Sarah",
+        "dialogue": "'I couldn't agree more,'" she says with a hint of playfulness in her voice.",
+        "duration_seconds": 18.0,
+        "scene_description": "Medium shot of Sarah as she speaks, her eyes sparkling with interest. The camera pans across the room to reveal the others' reactions.",
+        "camera_angle": "medium_shot",
+        "mood": "playful_wistful",
+        "visual_elements": ["Sarah's outfit", "group reactions"],
+        "character_emotions": {"Sarah": "curious_playful"},
+        "background_setting": "villa_group_room",
+        "lighting": "softbox_natural"
+      },
+      {
+        "speaker": "Jamie (Reaction)",
+        "dialogue": None,
+        "duration_seconds": 10.0,
+        "scene_description": "Close-up of Jamie's face as he responds to Sarah, his eyes locking onto hers for a brief moment.",
+        "camera_angle": "close-up",
+        "mood": "romantic_intrigued",
+        "visual_elements": ["Jamie's reaction", "Sarah's expression"],
+        "character_emotions": {"Jamie": "romantically_interested"},
+        "background_setting": "villa_group_room",
+        "lighting": "softbox_natural"
+      }
+    ],
+    "transitions": ["fade_in", "cut", "zoom_transition", "dissolve"],
+    "music_suggestions": ["romantic_piano", "upbeat_contemporary"]
+  }
+}
