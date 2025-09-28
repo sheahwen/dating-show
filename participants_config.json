@@ -1,0 +1,41 @@
+{
+  "participants": [
+    {
+      "name": "Alex",
+      "age": 28,
+      "personality_traits": [
+        "confident",
+        "adventurous",
+        "outgoing",
+        "funny",
+        "traveler"
+      ],
+      "model_client": {
+        "client": "ollama",
+        "model": "llama3.2:1b"
+      }
+    },
+    {
+      "name": "Sarah",
+      "age": 25,
+      "personality_traits": [
+        "shy",
+        "introverted",
+        "artistic",
+        "romantic",
+        "bookworm"
+      ],
+      "model_client": {
+        "client": "ollama",
+        "model": "llama3.2"
+      }
+    }
+  ],
+  "director": {
+    "name": "Director",
+    "model_client": {
+      "client": "openai",
+      "model": "gemini-2.0-flash"
+    }
+  }
+}

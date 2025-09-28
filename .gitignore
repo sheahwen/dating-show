@@ -194,3 +194,6 @@ Temporary Items
 logs/
 data/
 temp/
+
+# Generated content
+/pipeline_output
