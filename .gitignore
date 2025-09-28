@@ -51,6 +51,13 @@ coverage.xml
 .pytest_cache/
 cover/
 
+# Generated files
+pipeline_output/
+conversations/
+generated_videos/
+video_prompts/
+storyboards/
+
 # Translations
 *.mo
 *.pot
