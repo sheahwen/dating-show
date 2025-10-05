@@ -7,24 +7,59 @@ import argparse
 import asyncio
 import json
 from pathlib import Path
-from typing import List, Dict, Any
 from datetime import datetime
+import re
+from autogen_ext.models.ollama import OllamaChatCompletionClient
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from autogen_core.models import UserMessage
+from autogen_agentchat.agents import AssistantAgent
+from autogen_agentchat.messages import StructuredMessage
 from dotenv import load_dotenv
 
-from models import ConversationData, StoryboardData, StoryboardScene
+from models import ConversationData, StoryboardData, StoryboardMetadata, StoryboardScene, StoryboardWithMetadataData
 
 load_dotenv(override=True)
-
 
 class Stage2Pipeline:
     """Pipeline for Stage 2: Storyboard generation from conversations."""
     
-    def __init__(self, output_dir: str = "pipeline_output"):
+    def __init__(self, output_dir: str = "pipeline_output", config_path: str = "config/storyboarding_config.json"):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
-        self.model_client = OpenAIChatCompletionClient(model="gemini-2.0-flash")
+        
+        # Load configuration
+        self.config = self._load_config(config_path)
+        self.model_client = self._create_model_client()
+        self.storyboard_agent = self._create_storyboard_agent()
+    
+    def _load_config(self, config_path: str) -> dict:
+        """Load configuration from JSON file."""
+        config_file = Path(config_path)
+        if not config_file.exists():
+            raise FileNotFoundError(f"Configuration file not found: {config_path}")
+        
+        with open(config_file, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    
+    def _create_model_client(self):
+        """Create model client based on configuration."""
+        model_config = self.config["model_client"]
+        
+        if model_config["client"] == "ollama":
+            return OllamaChatCompletionClient(model=model_config["model"])
+        elif model_config["client"] == "openai":
+            return OpenAIChatCompletionClient(model=model_config["model"])
+        else:
+            raise ValueError(f"Unsupported client type: {model_config['client']}")
+    
+    def _create_storyboard_agent(self):
+        """Create AssistantAgent with structured output for storyboard generation."""
+        return AssistantAgent(
+            name="storyboard_generator",
+            model_client=self.model_client,
+            system_message="You are a professional storyboard creator for dating shows. Generate detailed storyboards from conversation transcripts.",
+            output_content_type=StoryboardData,  
+        )
     
     def load_conversation(self, filepath: str) -> ConversationData:
         """Load conversation data from JSON file."""
@@ -34,7 +69,6 @@ class Stage2Pipeline:
     
     def _create_storyboard_prompt(self, conversation_data: ConversationData) -> str:
         """Create a detailed prompt for storyboard generation."""
-        
         # Extract participant names and traits
         participants_info = []
         for participant in conversation_data.participants:
@@ -47,10 +81,14 @@ class Stage2Pipeline:
             if msg.message_type.value != "user":  # Skip system messages
                 conversation_text.append(f"{msg.source}: {msg.content}")
         
+        # Get settings from config
+        gen_settings = self.config["generation_settings"]
+        prompt_settings = self.config["prompt_settings"]
+        
         # Get the JSON schema from the Pydantic model
         storyboard_schema = StoryboardData.model_json_schema()
         
-        prompt = f"""You are a professional TV show storyboard creator. Based on the following dating show conversation, create a detailed storyboard for a 5-minute video segment.
+        prompt = f"""You are a professional TV show storyboard creator. Based on the following dating show conversation, create a detailed storyboard for a {gen_settings["target_duration_seconds"]}-second video segment.
 
 PARTICIPANTS:
 {chr(10).join(participants_info)}
@@ -60,7 +98,7 @@ DIRECTOR: {conversation_data.director.name}
 CONVERSATION:
 {chr(10).join(conversation_text)}
 
-Create a storyboard with 8-12 scenes that captures the essence of this conversation. Each scene should be 20-40 seconds long.
+Create a storyboard with {gen_settings["min_scenes"]}-{gen_settings["max_scenes"]} scenes that captures the essence of this conversation. Each scene should be {gen_settings["scene_duration_range"]["min"]}-{gen_settings["scene_duration_range"]["max"]} seconds long.
 
 For each scene, provide:
 1. Scene number
@@ -70,90 +108,83 @@ For each scene, provide:
 5. Characters involved
 6. Setting/location
 7. Mood/tone
-8. Key dialogue (if any)
-9. Visual notes for filming
+8. Camera shot type (close-up, wide shot, medium shot, over-the-shoulder, establishing shot, etc.)
+9. Key dialogue (if any)
+10. Visual notes for filming
 
 The storyboard should:
 - Maintain the authentic flow of the conversation
 - Highlight emotional moments and connections
-- Include reaction shots and close-ups
 - Show the dating show environment (villa, outdoor spaces, etc.)
 - Create engaging television moments
-- Build romantic tension and drama
 - Include establishing shots and transitions
 
 Respond with a JSON object that matches this exact schema:
 
 {json.dumps(storyboard_schema, indent=2)}
 
-Critical: make sure the JSON is valid and complete. Do not include any additional text outside the JSON response."""
+CRITICAL INSTRUCTIONS:
+- DO NOT return the schema above - create actual storyboard content
+- Make sure the JSON is valid and complete. Do not include any additional text outside the JSON response."""
         
         return prompt
     
-    async def generate_storyboard(self, conversation_data: ConversationData) -> StoryboardData:
+    async def generate_storyboard(self, conversation_data: ConversationData) -> StoryboardWithMetadataData:
         """Generate storyboard from conversation data using LLM."""
         
         prompt = self._create_storyboard_prompt(conversation_data)
+        print(f"Storyboard prompt: {prompt}")
         
         try:
-            # Create message for the LLM
-            message = UserMessage(content=prompt)
+            result = await self.storyboard_agent.run(task=prompt)
             
-            # Get response from LLM
-            response = await self.model_client.create([message])
-            content = response.content
+            # The last message should be a StructuredMessage with StoryboardData content
+            last_message = result.messages[-1]
+            print(f"Agent response type: {type(last_message)}")
             
-            # Parse JSON response
-            try:
-                storyboard_dict = json.loads(content)
-            except json.JSONDecodeError as e:
-                print(f"Failed to parse JSON response: {e}")
-                print(f"Raw response: {content}")
-                raise ValueError("LLM response was not valid JSON")
-            
-            # Convert to StoryboardData model
-            scenes = []
-            for scene_data in storyboard_dict.get("scenes", []):
-                scene = StoryboardScene(
-                    scene_number=scene_data.get("scene_number", 0),
-                    title=scene_data.get("title", ""),
-                    description=scene_data.get("description", ""),
-                    duration_seconds=float(scene_data.get("duration_seconds", 30.0)),
-                    characters_involved=scene_data.get("characters_involved", []),
-                    setting=scene_data.get("setting", ""),
-                    mood=scene_data.get("mood", ""),
-                    key_dialogue=scene_data.get("key_dialogue"),
-                    visual_notes=scene_data.get("visual_notes")
+            if isinstance(last_message, StructuredMessage) and isinstance(last_message.content, StoryboardData):
+                storyboard_data = last_message.content
+                print(f"Successfully generated structured storyboard: {storyboard_data.title}")
+                
+                # Add metadata that's not in the LLM response
+                storyboard_data_with_metadata = StoryboardWithMetadataData(
+                    **storyboard_data.model_dump(),
+                    metadata=StoryboardMetadata(
+                        pipeline_stage=2,
+                        generation_method="autogen_structured_output",
+                        model_used=self.config["model_client"]["model"],
+                        participants=[p.name for p in conversation_data.participants]
+                    )
                 )
-                scenes.append(scene)
-            
-            storyboard_data = StoryboardData(
-                title=storyboard_dict.get("title", "Dating Show Episode"),
-                total_duration_seconds=float(storyboard_dict.get("total_duration_seconds", 300.0)),
-                scenes=scenes,
-                overall_theme=storyboard_dict.get("overall_theme", ""),
-                target_audience=storyboard_dict.get("target_audience", "Young adults"),
-                source_conversation_file="",  # Will be set by caller
-                metadata={
-                    "pipeline_stage": 2,
-                    "generation_method": "llm_storyboard",
-                    "model_used": "gemini-2.0-flash",
-                    "participants": [p.name for p in conversation_data.participants]
-                }
-            )
-            
-            return storyboard_data
+                return storyboard_data_with_metadata
+            else:
+                raise ValueError("Storyboard agent response was not valid structured output")
             
         except Exception as e:
             print(f"Error generating storyboard: {e}")
             raise
+
+    def extract_datetime_from_filepath(self, filepath: str) -> str:
+        """Extract timestamp from filepath like 'pipeline_output/conversation_20250928_162628.json'"""
+        pattern = r'conversation_(\d{8}_\d{6})\.json'
+        match = re.search(pattern, filepath)
+        if match:
+            return match.group(1)  # Returns "20250928_162628"
+        return None
     
-    def save_storyboard(self, storyboard_data: StoryboardData, filename: str = None) -> str:
+    def save_storyboard(self, storyboard_data: StoryboardData, conversation_filename: str) -> str:
         """Save storyboard data to JSON file."""
-        if filename is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"storyboard_{timestamp}.json"
         
+        timestamp = self.extract_datetime_from_filepath(conversation_filename)
+        base_filename = f"storyboard_{timestamp}"
+        
+        # check for existing files and add counter
+        counter = 1
+        filename = f"{base_filename}.json"
+        while (self.output_dir / filename).exists():
+            filename = f"{base_filename}_v{counter}.json"
+            counter += 1
+
         filepath = self.output_dir / filename
         
         with open(filepath, 'w', encoding='utf-8') as f:
@@ -167,7 +198,6 @@ Critical: make sure the JSON is valid and complete. Do not include any additiona
         print(f"\n=== STORYBOARD: {storyboard_data.title} ===")
         print(f"Total Duration: {storyboard_data.total_duration_seconds} seconds ({storyboard_data.total_duration_seconds/60:.1f} minutes)")
         print(f"Theme: {storyboard_data.overall_theme}")
-        print(f"Target Audience: {storyboard_data.target_audience}")
         print(f"Number of Scenes: {len(storyboard_data.scenes)}")
         print("\n=== SCENES ===")
         
@@ -177,6 +207,8 @@ Critical: make sure the JSON is valid and complete. Do not include any additiona
             print(f"  Characters: {', '.join(scene.characters_involved)}")
             print(f"  Setting: {scene.setting}")
             print(f"  Mood: {scene.mood}")
+            if scene.camera_shot:
+                print(f"  Camera Shot: {scene.camera_shot}")
             print(f"  Description: {scene.description}")
             if scene.key_dialogue:
                 print(f"  Key Dialogue: {scene.key_dialogue}")
@@ -196,10 +228,10 @@ Critical: make sure the JSON is valid and complete. Do not include any additiona
             storyboard_data.source_conversation_file = conversation_filepath
             
             # Save storyboard
-            storyboard_filepath = self.save_storyboard(storyboard_data)
+            storyboard_filepath = self.save_storyboard(storyboard_data, conversation_filepath)
             
             # Print summary
-            self.print_storyboard_summary(storyboard_data)
+            # self.print_storyboard_summary(storyboard_data)
             
             # Cleanup
             await self.model_client.close()
@@ -217,10 +249,11 @@ async def main():
     parser = argparse.ArgumentParser(description="Generate storyboard from conversation data")
     parser.add_argument("--conversation", required=True, help="Path to conversation JSON file")
     parser.add_argument("--output-dir", default="pipeline_output", help="Output directory for storyboard file")
+    parser.add_argument("--config", default="config/storyboarding_config.json", help="Path to storyboarding configuration file")
     
     args = parser.parse_args()
     
-    pipeline = Stage2Pipeline(output_dir=args.output_dir)
+    pipeline = Stage2Pipeline(output_dir=args.output_dir, config_path=args.config)
     
     try:
         storyboard_filepath = await pipeline.run_full_stage2(args.conversation)

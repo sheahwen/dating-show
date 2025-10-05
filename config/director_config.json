@@ -1,0 +1,9 @@
+{
+  "director": {
+    "name": "Director",
+    "model_client": {
+      "client": "ollama",
+      "model": "llama3.2"
+    }
+  }
+}

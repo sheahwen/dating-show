@@ -62,19 +62,19 @@ STORYBOARD DETAILS:
 Title: {storyboard_data.title}
 Total Duration: {storyboard_data.total_duration_seconds} seconds
 Theme: {storyboard_data.overall_theme}
-Target Audience: {storyboard_data.target_audience}
 
 SCENES:
 {chr(10).join(scenes_info)}
 
 For each scene, create a video generation prompt that includes:
 1. Detailed visual description
-2. Camera movements and angles
-3. Lighting and mood
-4. Character actions and expressions
-5. Setting and environment details
-6. Style notes (cinematic, reality TV, documentary, etc.)
-7. Technical specifications
+2. Camera shot type (close-up, wide shot, medium shot, over-the-shoulder, establishing shot, etc.)
+3. Camera movements and angles
+4. Lighting and mood
+5. Character actions and expressions
+6. Setting and environment details
+7. Style notes (cinematic, reality TV, documentary, etc.)
+8. Technical specifications
 
 The prompts should be optimized for AI video generation tools and create a cohesive, professional-looking dating show episode.
 
@@ -100,7 +100,7 @@ Critical: make sure the JSON is valid and complete. Do not include any additiona
         
         try:
             # Create message for the LLM
-            message = UserMessage(content=prompt)
+            message = UserMessage(content=prompt, source="system")
             
             # Get response from LLM
             response = await self.model_client.create([message])
@@ -114,36 +114,18 @@ Critical: make sure the JSON is valid and complete. Do not include any additiona
                 print(f"Raw response: {content}")
                 raise ValueError("LLM response was not valid JSON")
             
-            # Convert to VideoData model
-            segments = []
-            for segment_data in video_dict.get("segments", []):
-                segment = VideoSegment(
-                    segment_number=segment_data.get("segment_number", 0),
-                    scene_reference=segment_data.get("scene_reference", 0),
-                    video_prompt=segment_data.get("video_prompt", ""),
-                    duration_seconds=float(segment_data.get("duration_seconds", 30.0)),
-                    style_notes=segment_data.get("style_notes", ""),
-                    characters=segment_data.get("characters", []),
-                    setting=segment_data.get("setting", ""),
-                    mood=segment_data.get("mood", "")
-                )
-                segments.append(segment)
+            # Let Pydantic handle the validation and object creation
+            # Add metadata that's not in the LLM response
+            video_dict["source_storyboard_file"] = ""  # Will be set by caller
+            video_dict["metadata"] = {
+                "pipeline_stage": 3,
+                "generation_method": "llm_video_prompts",
+                "model_used": "gemini-2.0-flash",
+                "storyboard_title": storyboard_data.title
+            }
             
-            video_data = VideoData(
-                title=video_dict.get("title", "Dating Show Episode"),
-                total_duration_seconds=float(video_dict.get("total_duration_seconds", 300.0)),
-                segments=segments,
-                overall_style=video_dict.get("overall_style", "Reality TV style"),
-                resolution=video_dict.get("resolution", "1920x1080"),
-                fps=int(video_dict.get("fps", 24)),
-                source_storyboard_file="",  # Will be set by caller
-                metadata={
-                    "pipeline_stage": 3,
-                    "generation_method": "llm_video_prompts",
-                    "model_used": "gemini-2.0-flash",
-                    "storyboard_title": storyboard_data.title
-                }
-            )
+            # Use Pydantic to parse and validate the entire structure
+            video_data = VideoData(**video_dict)
             
             return video_data
             
@@ -188,6 +170,7 @@ Critical: make sure the JSON is valid and complete. Do not include any additiona
                 f.write(f"Characters: {', '.join(segment.characters)}\n")
                 f.write(f"Setting: {segment.setting}\n")
                 f.write(f"Mood: {segment.mood}\n")
+                f.write(f"Camera Shot: {segment.camera_shot}\n")
                 f.write(f"Style Notes: {segment.style_notes}\n\n")
                 f.write(f"VIDEO PROMPT:\n")
                 f.write(f"{segment.video_prompt}\n")
@@ -212,6 +195,7 @@ Critical: make sure the JSON is valid and complete. Do not include any additiona
             print(f"  Characters: {', '.join(segment.characters)}")
             print(f"  Setting: {segment.setting}")
             print(f"  Mood: {segment.mood}")
+            print(f"  Camera Shot: {segment.camera_shot}")
             print(f"  Style Notes: {segment.style_notes}")
             print(f"  Video Prompt: {segment.video_prompt[:100]}...")
     

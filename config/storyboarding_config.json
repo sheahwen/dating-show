@@ -1,0 +1,21 @@
+{
+  "model_client": {
+    "client": "openai",
+    "model": "gpt-4o-mini"
+  },
+  "generation_settings": {
+    "target_duration_seconds": 10,
+    "min_scenes": 2,
+    "max_scenes": 4,
+    "scene_duration_range": {
+      "min": 0.5,
+      "max": 5
+    }
+  },
+  "prompt_settings": {
+    "include_visual_notes": true,
+    "include_key_dialogue": true,
+    "emphasize_romantic_tension": true,
+    "include_reaction_shots": true
+  }
+}

@@ -20,16 +20,22 @@ async def run_stage1(args):
     pipeline = Stage1Pipeline(output_dir=args.output_dir)
     
     # Handle custom configuration if provided
-    custom_config = None
-    if args.config:
+    participants_config = None
+    director_config = None
+    if args.participants_config:
         import json
-        with open(args.config, 'r') as f:
-            custom_config = json.load(f)
+        with open(args.participants_config, 'r') as f:
+            participants_config = json.load(f)
+    if args.director_config:
+        import json
+        with open(args.director_config, 'r') as f:
+            director_config = json.load(f)
     
     try:
         filepath = await pipeline.run_full_stage1(
             max_turns=args.max_turns,
-            participants_config=custom_config
+            participants_config=participants_config,
+            director_config=director_config
         )
         print(f"\n✅ Stage 1 completed successfully!")
         print(f"📄 Conversation file: {filepath}")
@@ -149,7 +155,7 @@ Examples:
   python main.py full --max-turns 8
   
   # Use custom configuration
-  python main.py stage1 --config custom_config.json
+  python main.py stage1 --participants-config participants_config.json --director-config director_config.json
         """
     )
     
@@ -159,7 +165,8 @@ Examples:
     # Stage 1 subcommand
     stage1_parser = subparsers.add_parser('stage1', help='Run Stage 1: Conversation generation')
     stage1_parser.add_argument('--max-turns', type=int, default=5, help='Maximum conversation turns')
-    stage1_parser.add_argument('--config', default='participants_config.json', help='Path to custom configuration JSON file')
+    stage1_parser.add_argument('--participants-config', default='config/participants_config.json', help='Path to custom configuration JSON file')
+    stage1_parser.add_argument('--director-config', default='config/director_config.json', help='Path to custom configuration JSON file')
     stage1_parser.add_argument('--output-dir', default='pipeline_output', help='Output directory')
     
     # Stage 2 subcommand
