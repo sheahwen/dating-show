@@ -7,16 +7,22 @@ import argparse
 import asyncio
 import json
 from pathlib import Path
-from datetime import datetime
-import re
-from autogen_ext.models.ollama import OllamaChatCompletionClient
-from autogen_ext.models.openai import OpenAIChatCompletionClient
-from autogen_core.models import UserMessage
-from autogen_agentchat.agents import AssistantAgent
-from autogen_agentchat.messages import StructuredMessage
 from dotenv import load_dotenv
 
-from models import ConversationData, StoryboardData, StoryboardMetadata, StoryboardScene, StoryboardWithMetadataData
+from autogen_agentchat.agents import AssistantAgent
+from autogen_agentchat.messages import StructuredMessage
+from autogen_core.models import UserMessage
+
+from common.clients import create_model_client
+from common.io import extract_timestamp_from_filepath, save_json
+from common.models import (
+    ConversationData,
+    StoryboardData,
+    StoryboardMetadata,
+    StoryboardScene,
+    StoryboardWithMetadataData,
+)
+from stage2.prompts import build_storyboard_prompt, summarize_highlights
 
 load_dotenv(override=True)
 
@@ -44,13 +50,7 @@ class Stage2Pipeline:
     def _create_model_client(self):
         """Create model client based on configuration."""
         model_config = self.config["model_client"]
-        
-        if model_config["client"] == "ollama":
-            return OllamaChatCompletionClient(model=model_config["model"])
-        elif model_config["client"] == "openai":
-            return OpenAIChatCompletionClient(model=model_config["model"])
-        else:
-            raise ValueError(f"Unsupported client type: {model_config['client']}")
+        return create_model_client(model_config)
     
     def _create_storyboard_agent(self):
         """Create AssistantAgent with structured output for storyboard generation."""
@@ -67,72 +67,11 @@ class Stage2Pipeline:
             data = json.load(f)
         return ConversationData(**data)
     
-    def _create_storyboard_prompt(self, conversation_data: ConversationData) -> str:
-        """Create a detailed prompt for storyboard generation."""
-        # Extract participant names and traits
-        participants_info = []
-        for participant in conversation_data.participants:
-            traits = ", ".join(participant.personality_traits)
-            participants_info.append(f"- {participant.name} ({participant.age}): {traits}")
-        
-        # Extract key conversation moments
-        conversation_text = []
-        for msg in conversation_data.messages:
-            if msg.message_type.value != "user":  # Skip system messages
-                conversation_text.append(f"{msg.source}: {msg.content}")
-        
-        # Get settings from config
-        gen_settings = self.config["generation_settings"]
-        prompt_settings = self.config["prompt_settings"]
-        
-        # Get the JSON schema from the Pydantic model
-        storyboard_schema = StoryboardData.model_json_schema()
-        
-        prompt = f"""You are a professional TV show storyboard creator. Based on the following dating show conversation, create a detailed storyboard for a {gen_settings["target_duration_seconds"]}-second video segment.
-
-PARTICIPANTS:
-{chr(10).join(participants_info)}
-
-DIRECTOR: {conversation_data.director.name}
-
-CONVERSATION:
-{chr(10).join(conversation_text)}
-
-Create a storyboard with {gen_settings["min_scenes"]}-{gen_settings["max_scenes"]} scenes that captures the essence of this conversation. Each scene should be {gen_settings["scene_duration_range"]["min"]}-{gen_settings["scene_duration_range"]["max"]} seconds long.
-
-For each scene, provide:
-1. Scene number
-2. Title (short, descriptive)
-3. Detailed description of what happens
-4. Duration in seconds
-5. Characters involved
-6. Setting/location
-7. Mood/tone
-8. Camera shot type (close-up, wide shot, medium shot, over-the-shoulder, establishing shot, etc.)
-9. Key dialogue (if any)
-10. Visual notes for filming
-
-The storyboard should:
-- Maintain the authentic flow of the conversation
-- Highlight emotional moments and connections
-- Show the dating show environment (villa, outdoor spaces, etc.)
-- Create engaging television moments
-- Include establishing shots and transitions
-
-Respond with a JSON object that matches this exact schema:
-
-{json.dumps(storyboard_schema, indent=2)}
-
-CRITICAL INSTRUCTIONS:
-- DO NOT return the schema above - create actual storyboard content
-- Make sure the JSON is valid and complete. Do not include any additional text outside the JSON response."""
-        
-        return prompt
-    
     async def generate_storyboard(self, conversation_data: ConversationData) -> StoryboardWithMetadataData:
         """Generate storyboard from conversation data using LLM."""
-        
-        prompt = self._create_storyboard_prompt(conversation_data)
+        highlight_limit = self.config.get("highlight_settings", {}).get("max_highlights", 6)
+        highlights = summarize_highlights(conversation_data, max_highlights=highlight_limit)
+        prompt = build_storyboard_prompt(conversation_data, self.config, highlights)
         print(f"Storyboard prompt: {prompt}")
         
         try:
@@ -164,18 +103,9 @@ CRITICAL INSTRUCTIONS:
             print(f"Error generating storyboard: {e}")
             raise
 
-    def extract_datetime_from_filepath(self, filepath: str) -> str:
-        """Extract timestamp from filepath like 'pipeline_output/conversation_20250928_162628.json'"""
-        pattern = r'conversation_(\d{8}_\d{6})\.json'
-        match = re.search(pattern, filepath)
-        if match:
-            return match.group(1)  # Returns "20250928_162628"
-        return None
-    
     def save_storyboard(self, storyboard_data: StoryboardData, conversation_filename: str) -> str:
         """Save storyboard data to JSON file."""
-        
-        timestamp = self.extract_datetime_from_filepath(conversation_filename)
+        timestamp = extract_timestamp_from_filepath(conversation_filename, prefix="conversation")
         base_filename = f"storyboard_{timestamp}"
         
         # check for existing files and add counter
@@ -187,9 +117,8 @@ CRITICAL INSTRUCTIONS:
 
         filepath = self.output_dir / filename
         
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(storyboard_data.model_dump(), f, indent=2, ensure_ascii=False, default=str)
-        
+        save_json(storyboard_data.model_dump(), filepath)
+
         print(f"Storyboard saved to: {filepath}")
         return str(filepath)
     

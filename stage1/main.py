@@ -5,23 +5,23 @@ This module handles the creation of participants and directors for the dating sh
 
 import asyncio
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import List, Tuple, Union
-from datetime import datetime
-from autogen_ext.models.ollama import OllamaChatCompletionClient
-from autogen_ext.models.openai import OpenAIChatCompletionClient
+
 from dotenv import load_dotenv
 
-from agent import AgentFactory, ParticipantAgent, DirectorAgent
-from dating_show_chat import DatingShowChat
-from models import (
-    ConversationData,
-    ParticipantInfo,
-    DirectorInfo,
-    ConversationMessage,
-    MessageType,
+from common.clients import create_model_client
+from common.io import timestamped_filename
+from common.models import ConversationData
+from stage1 import AgentFactory, DirectorAgent, ParticipantAgent
+from stage1.chat import DatingShowChat
+from stage1.helpers import (
+    convert_messages_to_conversation_data,
+    generate_base_filename,
+    save_checkpoint,
+    save_conversation,
 )
-from utils import extract_content_without_thoughts
 
 load_dotenv(override=True)
 
@@ -32,25 +32,18 @@ class Stage1Pipeline:
     def __init__(self, output_dir: str = "pipeline_output"):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
-        self.save_frequency = 10  # Save every N turns
+        self.save_frequency = 10  # Save every N turns (passed into chat)
         self.checkpoint_counter = 0
 
-    def _create_model_client(
-        self, model_client_config: dict
-    ) -> Union[OllamaChatCompletionClient, OpenAIChatCompletionClient]:
-        """Create and return model client"""
-        # Hardcode to be ollama for now
-        return OllamaChatCompletionClient(model="llama3.2")
-        if model_client_config.get("client") == "ollama":
-            return OllamaChatCompletionClient(model=model_client_config.get("model"))
-        elif model_client_config.get("client") == "openai":
-            return OpenAIChatCompletionClient(model=model_client_config.get("model"))
-        else:
-            raise ValueError(f"Invalid client: {model_client_config.get('client')}")
+    def _create_model_client(self, model_client_config: dict):
+        """Create and return a chat model client."""
+        return create_model_client(
+            model_client_config, default_client="ollama", default_model="llama3.2"
+        )
 
     def create_participants_and_director(
         self, participants_config: List[dict], director_config: dict
-    ) -> Tuple[List[ParticipantAgent], DirectorAgent, List[OllamaChatCompletionClient]]:
+    ) -> Tuple[List[ParticipantAgent], DirectorAgent, list]:
         """Create participants and director with custom configurations."""
         agent_factory = AgentFactory()
         participants = []
@@ -76,60 +69,6 @@ class Stage1Pipeline:
 
         return participants, director
 
-    def _convert_messages_to_conversation_data(
-        self,
-        messages,
-        participants: List[ParticipantAgent],
-        director: DirectorAgent,
-        max_turns: int,
-        total_turns: int,
-    ) -> ConversationData:
-        """Convert raw messages to ConversationData model."""
-        # Convert participants to ParticipantInfo
-        participant_infos = [
-            ParticipantInfo(
-                name=p.name,
-                age=p.age,
-                personality_traits=p.personality_traits,
-                system_message=p.get_system_message(),
-            )
-            for p in participants
-        ]
-
-        # Convert director to DirectorInfo
-        director_info = DirectorInfo(
-            name=director.name, system_message=director.get_system_message()
-        )
-
-        # Convert messages to ConversationMessage
-        conversation_messages = []
-        for msg in messages:
-            # Determine message type based on source
-            if msg.source == "producer":
-                msg_type = MessageType.USER
-            elif msg.source == "director":
-                msg_type = MessageType.DIRECTOR
-            elif msg.source in [p.name for p in participants]:
-                msg_type = MessageType.PARTICIPANT
-            else:
-                msg_type = MessageType.ASSISTANT
-
-            conversation_msg = ConversationMessage(
-                content=extract_content_without_thoughts(msg.content),
-                source=msg.source,
-                message_type=msg_type,
-            )
-            conversation_messages.append(conversation_msg)
-
-        return ConversationData(
-            participants=participant_infos,
-            director=director_info,
-            messages=conversation_messages,
-            max_turns=max_turns,
-            total_turns=total_turns,
-            metadata={"pipeline_stage": 1, "generation_method": "autogen_agents"},
-        )
-
     async def run_conversation(
         self,
         participants: List[ParticipantAgent],
@@ -142,6 +81,7 @@ class Stage1Pipeline:
             participants=participants,
             director=director,
             max_turns=max_turns,
+            save_frequency=self.save_frequency,
             pipeline=self,  # Pass pipeline reference for saving
             base_filename=base_filename,
         )
@@ -150,7 +90,7 @@ class Stage1Pipeline:
         messages = await dating_chat.run()
 
         # Convert to structured data
-        conversation_data = self._convert_messages_to_conversation_data(
+        conversation_data = convert_messages_to_conversation_data(
             messages, participants, director, max_turns, dating_chat.turn_count
         )
 
@@ -160,23 +100,9 @@ class Stage1Pipeline:
         self, conversation_data: ConversationData, filename: str = None
     ) -> str:
         """Save conversation data to JSON file."""
-        if filename is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"conversation_{timestamp}.json"
-
-        filepath = self.output_dir / filename
-
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(
-                conversation_data.model_dump(),
-                f,
-                indent=2,
-                ensure_ascii=False,
-                default=str,
-            )
-
+        filepath = save_conversation(conversation_data, self.output_dir, filename)
         print(f"Conversation saved to: {filepath}")
-        return str(filepath)
+        return filepath
 
     def save_checkpoint(
         self,
@@ -185,36 +111,18 @@ class Stage1Pipeline:
         is_final: bool = False,
     ) -> str:
         """Save conversation checkpoint with incremental naming."""
-        if base_filename is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            base_filename = f"conversation_{timestamp}"
-
-        # Remove .json extension if present
-        if base_filename.endswith(".json"):
-            base_filename = base_filename[:-5]
-
-        if is_final:
-            filename = f"{base_filename}_final.json"
-        else:
-            self.checkpoint_counter += 1
-            filename = f"{base_filename}_checkpoint_{self.checkpoint_counter:03d}.json"
-
-        filepath = self.output_dir / filename
-
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(
-                conversation_data.model_dump(),
-                f,
-                indent=2,
-                ensure_ascii=False,
-                default=str,
-            )
-
+        filepath, self.checkpoint_counter = save_checkpoint(
+            conversation_data,
+            self.output_dir,
+            base_filename,
+            self.checkpoint_counter,
+            is_final=is_final,
+        )
         if is_final:
             print(f"✅ Final conversation saved to: {filepath}")
         else:
             print(f"💾 Checkpoint {self.checkpoint_counter} saved to: {filepath}")
-        return str(filepath)
+        return filepath
 
     async def run_full_stage1(
         self,
@@ -231,8 +139,7 @@ class Stage1Pipeline:
                 raise ValueError("director_config is required")
 
             # Generate base filename for checkpoints
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            base_filename = f"conversation_{timestamp}"
+            base_filename = generate_base_filename("conversation")
 
             participants, director = self.create_participants_and_director(
                 participants_config.get("participants", []),
@@ -274,8 +181,17 @@ async def main():
     """Main function for running Stage 1 independently."""
     pipeline = Stage1Pipeline()
 
-    participants_config = Path("participants_config.json")
-    director_config = Path("director_config.json")
+    participants_config_path = Path("participants_config.json")
+    director_config_path = Path("director_config.json")
+
+    participants_config = (
+        json.load(open(participants_config_path))
+        if participants_config_path.exists()
+        else None
+    )
+    director_config = (
+        json.load(open(director_config_path)) if director_config_path.exists() else None
+    )
 
     try:
         filepath = await pipeline.run_full_stage1(

@@ -4,13 +4,13 @@ Direct Video Generation from Storyboard
 This script converts storyboard data directly to video generation prompts without the intermediate Stage 3 step.
 """
 
-import json
 import argparse
-from pathlib import Path
+import json
 from datetime import datetime
+from pathlib import Path
 from typing import List
 
-from models import StoryboardData, StoryboardScene
+from common.models import StoryboardData, StoryboardScene
 
 
 class DirectVideoGenerator:

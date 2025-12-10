@@ -7,7 +7,7 @@ This script shows how conversations are saved every 10 turns instead of only at 
 import asyncio
 import json
 from pathlib import Path
-from stage1_agent_setup import Stage1Pipeline
+from stage1.main import Stage1Pipeline
 
 
 async def test_incremental_saving():

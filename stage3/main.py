@@ -6,14 +6,16 @@ This module handles the generation of video prompts and metadata from storyboard
 import argparse
 import asyncio
 import json
-from pathlib import Path
-from typing import List, Dict, Any
 from datetime import datetime
-from autogen_ext.models.openai import OpenAIChatCompletionClient
-from autogen_core.models import UserMessage
+from pathlib import Path
 from dotenv import load_dotenv
 
-from models import StoryboardData, VideoData, VideoSegment
+from autogen_core.models import UserMessage
+from autogen_ext.models.openai import OpenAIChatCompletionClient
+
+from common.io import save_json
+from common.models import StoryboardData, VideoData, VideoSegment
+from stage3.prompts import build_video_generation_prompt
 
 load_dotenv(override=True)
 
@@ -34,69 +36,9 @@ class Stage3Pipeline:
             data = json.load(f)
         return StoryboardData(**data)
     
-    def _create_video_generation_prompt(self, storyboard_data: StoryboardData) -> str:
-        """Create a detailed prompt for video generation."""
-        
-        # Extract scenes information
-        scenes_info = []
-        for scene in storyboard_data.scenes:
-            scene_text = f"""
-Scene {scene.scene_number}: {scene.title}
-- Duration: {scene.duration_seconds}s
-- Characters: {', '.join(scene.characters_involved)}
-- Setting: {scene.setting}
-- Mood: {scene.mood}
-- Description: {scene.description}
-- Key Dialogue: {scene.key_dialogue or 'None'}
-- Visual Notes: {scene.visual_notes or 'None'}"""
-            scenes_info.append(scene_text)
-        
-        # Get the JSON schema from the Pydantic model
-        video_schema = VideoData.model_json_schema()
-        
-        prompt = f"""You are a professional video production AI specializing in creating detailed video generation prompts for AI video tools like Runway, Pika, or Sora.
-
-Based on the following storyboard for a dating show episode, create detailed video generation prompts for each scene.
-
-STORYBOARD DETAILS:
-Title: {storyboard_data.title}
-Total Duration: {storyboard_data.total_duration_seconds} seconds
-Theme: {storyboard_data.overall_theme}
-
-SCENES:
-{chr(10).join(scenes_info)}
-
-For each scene, create a video generation prompt that includes:
-1. Detailed visual description
-2. Camera shot type (close-up, wide shot, medium shot, over-the-shoulder, establishing shot, etc.)
-3. Camera movements and angles
-4. Lighting and mood
-5. Character actions and expressions
-6. Setting and environment details
-7. Style notes (cinematic, reality TV, documentary, etc.)
-8. Technical specifications
-
-The prompts should be optimized for AI video generation tools and create a cohesive, professional-looking dating show episode.
-
-Make sure each video prompt is:
-- Highly detailed and specific
-- Optimized for AI video generation
-- Consistent with reality TV/dating show aesthetics
-- Technically feasible
-- Emotionally engaging
-
-Respond with a JSON object that matches this exact schema:
-
-{json.dumps(video_schema, indent=2)}
-
-Critical: make sure the JSON is valid and complete. Do not include any additional text outside the JSON response."""
-        
-        return prompt
-    
     async def generate_video_prompts(self, storyboard_data: StoryboardData) -> VideoData:
         """Generate video prompts from storyboard data using LLM."""
-        
-        prompt = self._create_video_generation_prompt(storyboard_data)
+        prompt = build_video_generation_prompt(storyboard_data)
         
         try:
             # Create message for the LLM
@@ -141,9 +83,8 @@ Critical: make sure the JSON is valid and complete. Do not include any additiona
         
         filepath = self.output_dir / filename
         
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(video_data.model_dump(), f, indent=2, ensure_ascii=False, default=str)
-        
+        save_json(video_data.model_dump(), filepath)
+
         print(f"Video data saved to: {filepath}")
         return str(filepath)
     
